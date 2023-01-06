@@ -1,7 +1,7 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.sites.shortcuts import get_current_site
 from django.contrib import messages
-from .models import Post, Category, ProfileSettings
+from .models import Post, Category, ProfileSettings, Notification
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.http import HttpResponse
@@ -29,6 +29,11 @@ from django.template.loader import render_to_string
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.encoding import force_bytes, force_str
 from django.core.mail import EmailMessage
+
+
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
+from datetime import datetime
 
 
 def homepage(request):
@@ -114,9 +119,27 @@ def post_details(request, slug):
                 if get_post.like.filter(id=user.id).exists():
                     get_post.like.remove(user.id)
                     liked = False
+                    # deleting notification for user when user unlike the post
+                    if Notification.objects.filter(
+                        provider_user=request.user, notification_type=Notification.LIKE
+                    ).exists():
+                        Notification.objects.filter(
+                            provider_user=request.user,
+                            notification_type=Notification.LIKE,
+                        ).delete()
                 else:
                     get_post.like.add(user.id)
                     liked = True
+
+                    # creating notification for user
+                    notification = Notification.objects.create(
+                        receiver_user=get_post.user,
+                        provider_user=user,
+                        notification_type=Notification.LIKE,
+                        post_name=Post.objects.get(title=get_post.title),
+                    )
+                    notification.save()
+
             comment_form = AddCommentForm()
 
     context = {
@@ -399,3 +422,10 @@ def change_password(request):
 
     context = {"form": form}
     return render(request, "blog/change_password.html", context)
+
+
+def notifications(request):
+    notifications = Notification.objects.filter(receiver_user=request.user)
+
+    context = {"notifications": notifications}
+    return render(request, "blog/notifications.html", context)
